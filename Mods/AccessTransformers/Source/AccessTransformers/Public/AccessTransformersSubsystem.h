@@ -44,24 +44,23 @@ inline FString ToString(const FFunctionReference& FunctionReference) {
 	return FunctionReference.Class + TEXT(":") + FunctionReference.Function;
 }
 
-/** Named to avoid conflict with UE Animation StructReference */
 USTRUCT()
-struct ACCESSTRANSFORMERS_API FATStructReference {
+struct ACCESSTRANSFORMERS_API FFieldReference {
 	GENERATED_BODY()
 
-	static FATStructReference FromConfigString(const FString& String);
+	static FFieldReference FromConfigString(const FString& String);
 
 	UPROPERTY(Config)
 	FString Class;
 
 	UPROPERTY(Config)
-	FString Struct;
+	FString Field;
 
-	UStruct* Resolve(FString& OutError, FString& OutWarning) const;
+	UField* Resolve(FString& OutError, FString& OutWarning) const;
 };
 
-inline FString ToString(const FATStructReference& StructReference) {
-	return StructReference.Class + TEXT(":") + StructReference.Struct;
+inline FString ToString(const FFieldReference& FieldReference) {
+	return FieldReference.Class + TEXT(":") + FieldReference.Field;
 }
 
 
@@ -76,7 +75,7 @@ struct ACCESSTRANSFORMERS_API FPluginAccessTransformers {
 	TArray<FFunctionReference> BlueprintCallable;
 
 	UPROPERTY()
-	TArray<FATStructReference> BlueprintType;
+	TArray<FFieldReference> BlueprintType;
 };
 
 UCLASS()
@@ -105,7 +104,9 @@ private:
 
 	TMap<UFunction*, EFunctionFlags> OriginalFunctionFlags;
 
-	TMap<UStruct*, EStructFlags> OriginalStructFlags;
+	TMap<UField*, FString> OriginalFieldBlueprintType;
+
+
 	
 	IDirectoryWatcher::FDirectoryChanged OnAccessTransformersChanged;
 };

@@ -31,7 +31,7 @@ FPropertyReference FPropertyReference::FromConfigString(const FString& String) {
 	return PropertyReference;
 }
 
-FProperty* FPropertyReference::Resolve(FString& OutError, FString& OutWarning) const {
+UStruct* ResolveClass(FString Class, FString& OutError, FString& OutWarning) {
 	UStruct* ResolvedClass = FindObject<UStruct>(nullptr, *Class);
 	if (!ResolvedClass) {
 		// Backwards compatibility for old structure (no package, allow source class name)
@@ -41,16 +41,22 @@ FProperty* FPropertyReference::Resolve(FString& OutError, FString& OutWarning) c
 			return nullptr;
 		}
 		OutWarning = FString::Printf(TEXT(
-				   "Using deprecated class specification. The loaded class was %s. Please update your AccessTransformers config file. This will become an error in a future version."
-			   ), *ResolvedClass->GetPathName());
+			"Using deprecated class specification. The loaded class was %s. Please update your AccessTransformers config file. This will become an error in a future version."
+		), *ResolvedClass->GetPathName());
 	}
-		
-	FProperty* ResolvedProperty = FindFProperty<FProperty>(ResolvedClass, *Property);
-	if(!ResolvedProperty) {
-		OutError = FString::Printf(TEXT("Could not find property %s:%s"), *ResolvedClass->GetPathName(), *Property);
-		return nullptr;
+	return ResolvedClass;
+}
+
+FProperty* FPropertyReference::Resolve(FString& OutError, FString& OutWarning) const {
+	if (const auto ResolvedClass = ResolveClass(Class, OutError, OutWarning)) {
+		FProperty* ResolvedProperty = FindFProperty<FProperty>(ResolvedClass, *Property);
+		if (!ResolvedProperty) {
+			OutError = FString::Printf(TEXT("Could not find property %s:%s"), *ResolvedClass->GetPathName(), *Property);
+			return nullptr;
+		}
+		return ResolvedProperty;
 	}
-	return ResolvedProperty;
+	return nullptr;
 }
 
 FFunctionReference FFunctionReference::FromConfigString(const FString& String) {
@@ -67,35 +73,39 @@ FFunctionReference FFunctionReference::FromConfigString(const FString& String) {
 }
 
 UFunction* FFunctionReference::Resolve(FString& OutError, FString& OutWarning) const {
-	UStruct* ResolvedClass = FindObject<UStruct>(nullptr, *Class);
-	if (!ResolvedClass) {
-		// Backwards compatibility for old structure (no package, allow source class name)
-		ResolvedClass = FindStructBySourceName(*Class);
-		if (!ResolvedClass) {
-			OutError = FString::Printf(TEXT("Could not find class %s"), *Class);
+	if (const auto ResolvedClass = ResolveClass(Class, OutError, OutWarning)) {
+		UFunction* ResolvedFunction = FindUField<UFunction>(ResolvedClass, *Function);
+		if (!ResolvedFunction) {
+			OutError = FString::Printf(TEXT("Could not find function %s:%s"), *ResolvedClass->GetPathName(), *Function);
 			return nullptr;
 		}
-		OutWarning = FString::Printf(
-			   TEXT(
-				   "Using deprecated class specification. The loaded class was %s. Please update your AccessTransformers config file. This will become an error in a future version."
-			   ), *ResolvedClass->GetPathName());
+		return ResolvedFunction;
 	}
-		
-	UFunction* ResolvedFunction = FindUField<UFunction>(ResolvedClass, *Function);
-	if(!ResolvedFunction) {
-		OutError = FString::Printf(TEXT("Could not find function %s:%s"), *ResolvedClass->GetPathName(), *Function);
-		return nullptr;
-	}
-	return ResolvedFunction;
+	return nullptr;
 }
 
-FATStructReference FATStructReference::FromConfigString(const FString& String) {
-	// TODO
-	return FATStructReference();
+FFieldReference FFieldReference::FromConfigString(const FString& String) {
+	FFieldReference FieldReference;
+	StaticStruct()->ImportText(
+		*String,
+		&FieldReference,
+		nullptr,
+		PPF_None,
+		nullptr,
+		StaticStruct()->GetName()
+	);
+	return FieldReference;
 }
 
-UStruct* FATStructReference::Resolve(FString& OutError, FString& OutWarning) const {
-	// TODO
+UField* FFieldReference::Resolve(FString& OutError, FString& OutWarning) const {
+	if (auto ResolvedClass = ResolveClass(Class, OutError, OutWarning)) {
+		UField* ResolvedField = FindUField<UFunction>(ResolvedClass, *Field);
+		if (!ResolvedField) {
+			OutError = FString::Printf(TEXT("Could not find field %s:%s"), *ResolvedClass->GetPathName(), *Field);
+			return nullptr;
+		}
+		return ResolvedField;
+	}
 	return nullptr;
 }
 
@@ -226,7 +236,7 @@ bool UAccessTransformersSubsystem::GetAccessTransformersForPlugin(IPlugin& Plugi
 	TArray<FConfigValue> BlueprintType;
 	AccessTransformersSection->MultiFind(TEXT("BlueprintType"), BlueprintType);
 	for (const FConfigValue& ConfigValue : BlueprintType) {
-		OutPluginAccessTransformers.BlueprintType.Add(FATStructReference::FromConfigString(ConfigValue.GetValue()));
+		OutPluginAccessTransformers.BlueprintType.Add(FFieldReference::FromConfigString(ConfigValue.GetValue()));
 	}
 
 	return true;
@@ -258,9 +268,7 @@ void UAccessTransformersSubsystem::ApplyTransformers() {
 			Property->SetPropertyFlags(CPF_BlueprintVisible);
 			Property->ClearPropertyFlags(CPF_BlueprintReadOnly);
 		}
-	}
 
-	for(const auto& PluginTransformers : AccessTransformers) {
 		for (const FFunctionReference& BPCFunctionReference : PluginTransformers.Value.BlueprintCallable) {
 			FString Error, Warning;
 			UFunction* Function = BPCFunctionReference.Resolve(Error, Warning);
@@ -280,30 +288,24 @@ void UAccessTransformersSubsystem::ApplyTransformers() {
 		
 			Function->FunctionFlags |= FUNC_BlueprintCallable;
 		}
-	}
 
-	for (const auto& PluginTransformers : AccessTransformers) {
-		for (const FATStructReference& BPTStructReference : PluginTransformers.Value.BlueprintType) {
+		for (const FFieldReference& BPTFieldReference : PluginTransformers.Value.BlueprintType) {
 			FString Error, Warning;
-			UStruct* Struct = BPTStructReference.Resolve(Error, Warning);
+			UField* Field = BPTFieldReference.Resolve(Error, Warning);
 			if (!Warning.IsEmpty()) {
-				UE_LOG(LogAccessTransformers, Warning, TEXT("Resolving BlueprintType %s requested by %s: %s"), *ToString(BPTStructReference), *PluginTransformers.Key, *Warning);
+				UE_LOG(LogAccessTransformers, Warning, TEXT("Resolving BlueprintType %s requested by %s: %s"), *ToString(BPTFieldReference), *PluginTransformers.Key, *Warning);
 			}
-			if (!Struct) {
-				UE_LOG(LogAccessTransformers, Error, TEXT("Could not resolve struct for BlueprintType %s requested by %s: %s"), *ToString(BPTStructReference), *PluginTransformers.Key, *Error);
+			if (!Field) {
+				UE_LOG(LogAccessTransformers, Error, TEXT("Could not resolve struct/enum for BlueprintType %s requested by %s: %s"), *ToString(BPTFieldReference), *PluginTransformers.Key, *Error);
 				continue;
 			}
 
-			if (!OriginalStructFlags.Contains(Struct)) {
-				// Only store the original flags if we haven't already
-				// so we don't override this with modified flags
-				// TODO no field StructFlags
-				// OriginalStructFlags.Add(Struct, Struct->StructFlags);
+			if (!OriginalFieldBlueprintType.Contains(Field)) {
+				// GetMetaData returns an empty string if the metadata for a key is not set
+				OriginalFieldBlueprintType.Add(Field, Field->GetMetaData(TEXT("BlueprintType"))); 
 			}
 
-			// TODO no field StructFlags
-			// TODO STRUCT_BlueprintType does not seem to exist
-			// Struct->StructFlags |= STRUCT_BlueprintType;
+			Field->SetMetaData(TEXT("BlueprintType"), TEXT("true"));
 		}
 	}
 }
@@ -321,12 +323,15 @@ void UAccessTransformersSubsystem::Reset() {
     }
 	OriginalFunctionFlags.Empty();
 
-	// Reset all struct flags
-	for (const TTuple<UStruct*, EStructFlags>& Struct : OriginalStructFlags) {
-		// TODO no field StructFlags
-		// Struct.Key->StructFlags = Struct.Value;
+	// Reset all struct/enum flags
+	for (const TTuple<UField*, FString>& Field : OriginalFieldBlueprintType) {
+		if (Field.Value.IsEmpty()) {
+			Field.Key->RemoveMetaData(TEXT("BlueprintType"));
+		} else {
+			Field.Key->SetMetaData(TEXT("BlueprintType"), *Field.Value);
+		}
 	}
-	OriginalStructFlags.Empty();
+	OriginalFieldBlueprintType.Empty();
 }
 
 const TCHAR* UAccessTransformersSubsystem::AccessTransformersFileName = TEXT("AccessTransformers.ini");
