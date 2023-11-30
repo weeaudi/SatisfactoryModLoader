@@ -89,6 +89,16 @@ UFunction* FFunctionReference::Resolve(FString& OutError, FString& OutWarning) c
 	return ResolvedFunction;
 }
 
+FATStructReference FATStructReference::FromConfigString(const FString& String) {
+	// TODO
+	return FATStructReference();
+}
+
+UStruct* FATStructReference::Resolve(FString& OutError, FString& OutWarning) const {
+	// TODO
+	return nullptr;
+}
+
 void UAccessTransformersSubsystem::Initialize(FSubsystemCollectionBase& Collection) {
 	Super::Initialize(Collection);
 
@@ -213,6 +223,12 @@ bool UAccessTransformersSubsystem::GetAccessTransformersForPlugin(IPlugin& Plugi
 		OutPluginAccessTransformers.BlueprintCallable.Add(FFunctionReference::FromConfigString(ConfigValue.GetValue()));
 	}
 
+	TArray<FConfigValue> BlueprintType;
+	AccessTransformersSection->MultiFind(TEXT("BlueprintType"), BlueprintType);
+	for (const FConfigValue& ConfigValue : BlueprintType) {
+		OutPluginAccessTransformers.BlueprintType.Add(FATStructReference::FromConfigString(ConfigValue.GetValue()));
+	}
+
 	return true;
 }
 
@@ -252,7 +268,7 @@ void UAccessTransformersSubsystem::ApplyTransformers() {
 				UE_LOG(LogAccessTransformers, Warning, TEXT("Resolving BlueprintCallable %s requested by %s: %s"), *ToString(BPCFunctionReference), *PluginTransformers.Key, *Warning);
 			}
 			if (!Function) {
-				UE_LOG(LogAccessTransformers, Error, TEXT("Could not resolve property for BlueprintCallable %s requested by %s: %s"), *ToString(BPCFunctionReference), *PluginTransformers.Key, *Error);
+				UE_LOG(LogAccessTransformers, Error, TEXT("Could not resolve function for BlueprintCallable %s requested by %s: %s"), *ToString(BPCFunctionReference), *PluginTransformers.Key, *Error);
 				continue;
 			}
 			
@@ -263,6 +279,31 @@ void UAccessTransformersSubsystem::ApplyTransformers() {
 			}
 		
 			Function->FunctionFlags |= FUNC_BlueprintCallable;
+		}
+	}
+
+	for (const auto& PluginTransformers : AccessTransformers) {
+		for (const FATStructReference& BPTStructReference : PluginTransformers.Value.BlueprintType) {
+			FString Error, Warning;
+			UStruct* Struct = BPTStructReference.Resolve(Error, Warning);
+			if (!Warning.IsEmpty()) {
+				UE_LOG(LogAccessTransformers, Warning, TEXT("Resolving BlueprintType %s requested by %s: %s"), *ToString(BPTStructReference), *PluginTransformers.Key, *Warning);
+			}
+			if (!Struct) {
+				UE_LOG(LogAccessTransformers, Error, TEXT("Could not resolve struct for BlueprintType %s requested by %s: %s"), *ToString(BPTStructReference), *PluginTransformers.Key, *Error);
+				continue;
+			}
+
+			if (!OriginalStructFlags.Contains(Struct)) {
+				// Only store the original flags if we haven't already
+				// so we don't override this with modified flags
+				// TODO no field StructFlags
+				// OriginalStructFlags.Add(Struct, Struct->StructFlags);
+			}
+
+			// TODO no field StructFlags
+			// TODO STRUCT_BlueprintType does not seem to exist
+			// Struct->StructFlags |= STRUCT_BlueprintType;
 		}
 	}
 }
@@ -279,6 +320,13 @@ void UAccessTransformersSubsystem::Reset() {
         Function.Key->FunctionFlags = Function.Value;
     }
 	OriginalFunctionFlags.Empty();
+
+	// Reset all struct flags
+	for (const TTuple<UStruct*, EStructFlags>& Struct : OriginalStructFlags) {
+		// TODO no field StructFlags
+		// Struct.Key->StructFlags = Struct.Value;
+	}
+	OriginalStructFlags.Empty();
 }
 
 const TCHAR* UAccessTransformersSubsystem::AccessTransformersFileName = TEXT("AccessTransformers.ini");
