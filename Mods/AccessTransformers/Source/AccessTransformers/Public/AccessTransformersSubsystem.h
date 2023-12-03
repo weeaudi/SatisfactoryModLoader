@@ -44,15 +44,18 @@ inline FString ToString(const FFunctionReference& FunctionReference) {
 	return FunctionReference.Class + TEXT(":") + FunctionReference.Function;
 }
 
+/** Intended for use with UStruct and UEnum */
 USTRUCT()
 struct ACCESSTRANSFORMERS_API FFieldReference {
 	GENERATED_BODY()
 
 	static FFieldReference FromConfigString(const FString& String);
 
+	// TODO rename me to something else since struct/enum aren't "classes"
 	UPROPERTY(Config)
 	FString Class;
 
+	// TODO remove me since BlueprintType operates on the whole UField not a property/function of it
 	UPROPERTY(Config)
 	FString Field;
 
